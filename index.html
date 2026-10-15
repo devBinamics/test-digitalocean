@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API Tester</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #6b7280;
+    --border: #d9dde5; --accent: #2563eb; --ok: #15803d; --err: #b91c1c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1115; --card: #181b22; --text: #e6e8ec; --muted: #9aa3b2;
+      --border: #2a2f3a; --accent: #60a5fa; --ok: #4ade80; --err: #f87171;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --card: #181b22; --text: #e6e8ec; --muted: #9aa3b2;
+    --border: #2a2f3a; --accent: #60a5fa; --ok: #4ade80; --err: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+  h1 { font-size: 18px; margin: 4px 0; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  select, input, textarea, button {
+    font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+  }
+  input.url { flex: 1; min-width: 200px; }
+  textarea { width: 100%; min-height: 90px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; resize: vertical; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  .label { color: var(--muted); font-size: 12px; margin: 8px 0 4px; }
+  .hdr { display: flex; gap: 6px; margin-bottom: 6px; }
+  .hdr input { flex: 1; min-width: 0; }
+  .hdr button { padding: 6px 10px; }
+  .status { font-weight: 700; }
+  .ok { color: var(--ok); } .err { color: var(--err); }
+  .meta { color: var(--muted); font-size: 12px; }
+  pre {
+    margin: 6px 0 0; padding: 10px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; overflow: auto; max-height: 420px; white-space: pre-wrap; word-break: break-all;
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+  }
+  .tabs { display: flex; gap: 6px; }
+  .tabs button.active { border-color: var(--accent); color: var(--accent); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>API Tester</h1>
+
+  <div class="card">
+    <div class="row">
+      <select id="method">
+        <option>GET</option><option>POST</option><option>PUT</option>
+        <option>PATCH</option><option>DELETE</option>
+      </select>
+      <input class="url" id="url" placeholder="http://localhost:3000/api/..." autocomplete="off">
+      <button class="primary" id="send">Enviar</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="tabs">
+      <button id="tabHeaders" class="active">Headers</button>
+      <button id="tabBody">Body</button>
+    </div>
+    <div id="panelHeaders">
+      <div id="headers" style="margin-top:8px"></div>
+      <button id="addHeader">+ Header</button>
+    </div>
+    <div id="panelBody" class="hidden">
+      <div class="label">JSON (solo para POST / PUT / PATCH)</div>
+      <textarea id="body" placeholder='{"clave": "valor"}'></textarea>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <span class="status" id="status">—</span>
+        <span class="meta" id="timing"></span>
+      </div>
+      <div class="row">
+        <button id="tabRespBody" class="tabs-r active">Respuesta</button>
+        <button id="tabRespHeaders">Headers</button>
+      </div>
+    </div>
+    <pre id="respBody">Todavía no enviaste ninguna request.</pre>
+    <pre id="respHeaders" class="hidden"></pre>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const METHODS_WITH_BODY = ["POST", "PUT", "PATCH"];
+
+  function addHeaderRow(key = "", value = "") {
+    const row = document.createElement("div");
+    row.className = "hdr";
+    row.innerHTML = `
+      <input placeholder="Nombre" class="hk" value="${escapeAttr(key)}">
+      <input placeholder="Valor" class="hv" value="${escapeAttr(value)}">
+      <button title="Quitar" class="rm">✕</button>`;
+    row.querySelector(".rm").onclick = () => row.remove();
+    $("headers").appendChild(row);
+  }
+
+  function escapeAttr(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  }
+
+  function collectHeaders() {
+    const out = {};
+    document.querySelectorAll("#headers .hdr").forEach((row) => {
+      const k = row.querySelector(".hk").value.trim();
+      const v = row.querySelector(".hv").value;
+      if (k) out[k] = v;
+    });
+    return out;
+  }
+
+  function showTab(which) {
+    const isHeaders = which === "headers";
+    $("panelHeaders").classList.toggle("hidden", !isHeaders);
+    $("panelBody").classList.toggle("hidden", isHeaders);
+    $("tabHeaders").classList.toggle("active", isHeaders);
+    $("tabBody").classList.toggle("active", !isHeaders);
+  }
+
+  function showResp(which) {
+    const isBody = which === "body";
+    $("respBody").classList.toggle("hidden", !isBody);
+    $("respHeaders").classList.toggle("hidden", isBody);
+    $("tabRespBody").classList.toggle("active", isBody);
+    $("tabRespHeaders").classList.toggle("active", !isBody);
+  }
+
+  async function send() {
+    const url = $("url").value.trim();
+    if (!url) { $("url").focus(); return; }
+
+    const method = $("method").value;
+    const headers = collectHeaders();
+    const init = { method, headers };
+
+    if (METHODS_WITH_BODY.includes(method)) {
+      const raw = $("body").value.trim();
+      if (raw) {
+        try {
+          JSON.parse(raw);
+        } catch (e) {
+          setStatus(`JSON inválido: ${e.message}`, false);
+          return;
+        }
+        init.body = raw;
+        if (!Object.keys(headers).some((h) => h.toLowerCase() === "content-type")) {
+          headers["Content-Type"] = "application/json";
+        }
+      }
+    }
+
+    $("send").disabled = true;
+    $("respBody").textContent = "Enviando…";
+    $("respHeaders").textContent = "";
+    $("status").textContent = "…";
+    $("status").className = "status";
+    $("timing").textContent = "";
+    const t0 = performance.now();
+
+    try {
+      const res = await fetch(url, init);
+      const ms = Math.round(performance.now() - t0);
+      const text = await res.text();
+
+      let pretty = text;
+      try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (_) {}
+
+      setStatus(`${res.status} ${res.statusText || ""}`.trim(), res.ok);
+      $("timing").textContent = `  · ${ms} ms · ${new Blob([text]).size} bytes`;
+      $("respBody").textContent = pretty || "(respuesta vacía)";
+      $("respHeaders").textContent = [...res.headers.entries()]
+        .map(([k, v]) => `${k}: ${v}`).join("\n") || "(sin headers)";
+    } catch (err) {
+      const ms = Math.round(performance.now() - t0);
+      setStatus("Error de red", false);
+      $("timing").textContent = `  · ${ms} ms`;
+      $("respBody").textContent = `${err.message}\n\nSi es CORS, revisá que el servidor permita el origen de esta página.`;
+      $("respHeaders").textContent = "";
+    } finally {
+      $("send").disabled = false;
+    }
+  }
+
+  function setStatus(text, ok) {
+    $("status").textContent = text;
+    $("status").className = "status " + (ok ? "ok" : "err");
+  }
+
+  $("send").onclick = send;
+  $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+  $("addHeader").onclick = () => addHeaderRow();
+  $("tabHeaders").onclick = () => showTab("headers");
+  $("tabBody").onclick = () => showTab("body");
+  $("tabRespBody").onclick = () => showResp("body");
+  $("tabRespHeaders").onclick = () => showResp("headers");
+
+  addHeaderRow("Accept", "application/json");
+  showTab("headers");
+</script>
+</body>
+</html>
